@@ -1,0 +1,99 @@
+---
+on:
+  workflow_call:
+    inputs:
+      cloud_run_project_id:
+        type: string
+        description: 'id of the cloud run project'
+        required: true
+      cloud_run_service_account:
+        type: string
+        description: 'service account key for the cloud run project'
+        required: true
+      cloud_run_service_account_email:
+        type: string
+        description: 'service account email for the cloud run project'
+        required: true
+      serverless_vpc_connector:
+        type: string
+        description: 'serverless vpc connector name'
+        required: true
+      db_url:
+        type: string
+        description: 'database url'
+        required: true
+      cloud_run_region:
+        type: string
+        description: 'cloud run region'
+        required: true
+      cloudsql_instance_id:
+        type: string
+        description: 'cloudsql instance id'
+        required: true
+      repo_name:
+        type: string
+        description: 'name of the repo'
+        required: true
+
+env:
+  cloud_run_project_id: ${{ inputs.cloud_run_project_id }}
+  cloud_run_service_account: ${{ inputs.cloud_run_service_account }}
+  cloud_run_service_account_email: ${{ inputs.cloud_run_service_account_email }}
+  serverless_vpc_connector: ${{ inputs.serverless_vpc_connector }}
+  db_url: ${{ inputs.db_url }}
+  cloud_run_region: ${{ inputs.cloud_run_region }}
+  cloudsql_instance_id: ${{ inputs.cloudsql_instance_id }}
+  repo_name: ${{ inputs.repo_name }}
+
+jobs:
+  build-and-deploy:
+    name: setup, build, and deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+
+      # this step is where our service account will be authenticated
+      - uses: google-github-actions/setup-gcloud@v0.2.0
+        with:
+          project_id: ${{ env.cloud_run_project_id }}
+          service_account_key: ${{ env.cloud_run_service_account }}
+          service_account_email: ${{ env.cloud_run_service_account_email }}
+
+      - name: enable the necessary apis and enable docker auth
+        run: |-
+          gcloud services enable containerregistry.googleapis.com
+          gcloud services enable run.googleapis.com
+          gcloud --quiet auth configure-docker
+
+      - name: build and tag image
+        run: |-
+          docker build . --build-arg database_url=$db_url --tag "gcr.io/$cloud_run_project_id/$repo_name:$github_sha"
+
+      - name: push image to gcr
+        run: |-
+          docker push gcr.io/$cloud_run_project_id/$repo_name:$github_sha
+
+      - name: run db migrations
+        run: |-
+          gcloud components install beta --quiet
+          gcloud beta run jobs create "db-migrations-${github_sha::7}" --image gcr.io/$cloud_run_project_id/$repo_name:$github_sha \
+            --set-env-vars database_url=$db_url \
+            --set-cloudsql-instances $cloud_run_project_id:$cloud_run_region:$cloudsql_instance_id \
+            --vpc-connector $serverless_vpc_connector \
+            --region $cloud_run_region \
+            --command "/bin/sh" --args="/app/scripts/migrate.sh" \
+            --wait
+
+      - name: deploy
+        run: |-
+          gcloud components install beta --quiet
+          gcloud beta run deploy $repo_name --image gcr.io/$cloud_run_project_id/$repo_name:$github_sha \
+            --project $cloud_run_project_id \
+            --platform managed \
+            --region $cloud_run_region \
+            --vpc-connector $serverless_vpc_connector \
+            --set-env-vars database_url=$db_url \
+            --add-cloudsql-instances $cloud_run_project_id:$cloud_run_region:$cloudsql_instance_id \
+            --allow-unauthenticated \
+            --quiet
