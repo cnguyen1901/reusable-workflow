@@ -2,6 +2,11 @@
 on:
   workflow_call:
     inputs:
+      environment:
+        type: string
+        description: 'Environment to deploy to'
+        required: true
+        default: dev
       cloud_run_project_id:
         type: string
         description: 'id of the cloud run project'
@@ -36,19 +41,20 @@ on:
         required: true
 
 env:
-  cloud_run_project_id: ${{ inputs.cloud_run_project_id }}
-  cloud_run_service_account: ${{ inputs.cloud_run_service_account }}
-  cloud_run_service_account_email: ${{ inputs.cloud_run_service_account_email }}
-  serverless_vpc_connector: ${{ inputs.serverless_vpc_connector }}
-  db_url: ${{ inputs.db_url }}
-  cloud_run_region: ${{ inputs.cloud_run_region }}
-  cloudsql_instance_id: ${{ inputs.cloudsql_instance_id }}
-  repo_name: ${{ inputs.repo_name }}
+  cloud_run_project_id: ${{ vars.cloud_run_project_id }}
+  cloud_run_service_account: ${{ secrets.cloud_run_service_account }}
+  cloud_run_service_account_email: ${{ secrets.cloud_run_service_account_email }}
+  serverless_vpc_connector: ${{ secrets.serverless_vpc_connector }}
+  db_url: ${{ secrets.db_url }}
+  cloud_run_region: ${{ vars.cloud_run_region }}
+  cloudsql_instance_id: ${{ secrets.cloudsql_instance_id }}
+  repo_name: ${{ vars.repo_name }}
 
 jobs:
   build-and-deploy:
     name: setup, build, and deploy
     runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
     steps:
       - name: checkout
         uses: actions/checkout@v2
